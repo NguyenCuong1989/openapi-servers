@@ -18,7 +18,8 @@ cd openapi-servers/servers/google-pse
 # Install dependencies
 pip install -r requirements.txt
 
-# Set up environment variables
+# Set up environment variables (or copy .env.example to .env)
+cp .env.example .env
 export GOOGLE_API_KEY="your_google_api_key_here"
 export GOOGLE_PSE_CX="your_search_engine_id_here"
 

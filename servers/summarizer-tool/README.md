@@ -4,6 +4,17 @@ This FastAPI server acts to summarize a given chunk of text.
 
 It is assumed that you are running an ollama instance in an adjacent container with the default port available.
 
+## 🚀 Quickstart
+
+```bash
+git clone https://github.com/open-webui/openapi-servers
+cd openapi-servers/servers
+
+pip install -r summarizer-tool/requirements.txt
+# The folder name contains a hyphen, so quote the module path and run from 'servers':
+uvicorn "summarizer-tool.main:app" --host 0.0.0.0 --reload
+```
+
 ## 📦 Endpoints
 ### POST /summarize/text
 Summarizes the given block of text

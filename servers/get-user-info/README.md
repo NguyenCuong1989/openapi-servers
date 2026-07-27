@@ -28,13 +28,19 @@ Authorization: Bearer YOUR_TOKEN
 
 ## ⚙️ Setup
 
-1. Set your auth backend base URL:
+1. Copy the environment template and edit it:
+
+```bash
+cp .env.example .env
+```
+
+2. Set your auth backend base URL (or use `.env`):
 
 ```
 export OPEN_WEBUI_BASE_URL=http://your-open-webui.com
 ```
 
-2. Run the service:
+3. Run the service:
 
 ```
 uvicorn main:app --host 0.0.0.0 --reload
@@ -48,7 +54,7 @@ uvicorn main:app --host 0.0.0.0 --reload
 
 ## 🍿 Example
 
-curl -H "Authorization: Bearer <your_token>" http://localhost:8000/get_user_info
+curl -H "Authorization: Bearer <your_token>" http://localhost:8000/get_session_user_info
 
 ## 🧪 Tech Stack
 

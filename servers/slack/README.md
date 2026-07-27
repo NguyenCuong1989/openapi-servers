@@ -18,7 +18,8 @@ cd openapi-servers/servers/slack
 # Install dependencies
 pip install -r requirements.txt
 
-# Set up environment variables
+# Set up environment variables (or copy .env.example to .env)
+cp .env.example .env
 export SLACK_BOT_TOKEN="xoxb-your-bot-token" # Required: Your Slack bot token
 export SLACK_TEAM_ID="your-team-id"         # Required: Your Slack team ID
 export SLACK_CHANNEL_IDS="C1,C2"            # Optional: Comma-separated channel IDs to restrict access to

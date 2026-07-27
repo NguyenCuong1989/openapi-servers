@@ -6,7 +6,7 @@ Blazingly fast time API server ⚡️
 
 ```bash
 git clone https://github.com/open-webui/openapi-servers
-cd openapi-servers/servers/time
+cd openapi-servers/servers/time-ui
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --reload
 ```
