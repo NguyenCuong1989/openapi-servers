@@ -22,7 +22,7 @@ app.add_middleware(
 
 bitcoin_price_data = pd.read_csv("btcusd_1-min_data.csv")
 bitcoin_price_data["Timestamp"] = pd.to_datetime(
-    bitcoin_price_data["Timestamp"], unit='s')
+    bitcoin_price_data["Timestamp"])
 
 
 class BitcoinPriceQueryForm(BaseModel):

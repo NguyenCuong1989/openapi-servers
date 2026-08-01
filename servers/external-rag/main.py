@@ -6,7 +6,7 @@ from typing import List
 # --- RAG Libraries ---
 from langchain_community.vectorstores import FAISS
 from sentence_transformers import SentenceTransformer
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 app = FastAPI(
     title="RAG Retriever API",
@@ -38,7 +38,7 @@ EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"  # Widely used, fast
 
 def get_retriever():
     embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
-    vectorstore = FAISS.load_local(VECTORSTORE_PATH, embeddings=embedder)
+    vectorstore = FAISS.load_local(VECTORSTORE_PATH, embeddings=embedder, allow_dangerous_deserialization=True)
     retriever = vectorstore.as_retriever()
     return retriever
 
@@ -59,7 +59,7 @@ def retrieve_docs(input: RetrievalQueryInput):
     try:
         out = []
         for q in input.queries:
-            docs = retriever.get_relevant_documents(q, k=input.k)
+            docs = retriever.vectorstore.similarity_search(q, k=input.k)
             results = [doc.page_content for doc in docs]
             out.append(RetrievedDoc(query=q, results=results))
         return RetrievalResponse(responses=out)

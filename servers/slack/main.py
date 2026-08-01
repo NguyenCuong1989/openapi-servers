@@ -27,18 +27,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 load_dotenv()
 
+BROKER_URL = os.getenv("BROKER_URL", "http://127.0.0.1:8765")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_TEAM_ID = os.getenv("SLACK_TEAM_ID")
 SLACK_CHANNEL_IDS_STR = os.getenv("SLACK_CHANNEL_IDS")  # Optional
 ALLOWED_ORIGINS_STR = os.getenv("ALLOWED_ORIGINS", "*")
 SERVER_API_KEY = os.getenv("SERVER_API_KEY")  # Optional API key for security
-
-if not SLACK_BOT_TOKEN:
-    logger.critical("SLACK_BOT_TOKEN environment variable not set.")
-    raise ValueError("SLACK_BOT_TOKEN environment variable not set.")
-if not SLACK_TEAM_ID:
-    logger.critical("SLACK_TEAM_ID environment variable not set.")
-    raise ValueError("SLACK_TEAM_ID environment variable not set.")
 
 PREDEFINED_CHANNEL_IDS: Optional[List[str]] = (
     [cid.strip() for cid in SLACK_CHANNEL_IDS_STR.split(",")] if SLACK_CHANNEL_IDS_STR else None
@@ -85,6 +79,50 @@ async def get_api_key(key: str = Security(api_key_header)):
 
 if not SERVER_API_KEY:
     logger.warning("SERVER_API_KEY environment variable is not set. Server will allow unauthenticated requests.")
+
+# ---------------------------------------------------------------------------
+# APΩ credential broker client
+# ---------------------------------------------------------------------------
+
+_slack_lease_id: Optional[str] = None
+
+
+def _broker_request(method: str, path: str, json: Optional[Dict] = None, headers: Optional[Dict] = None) -> Dict[str, Any]:
+    try:
+        r = httpx.request(method, f"{BROKER_URL}{path}", json=json, headers=headers, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        logger.warning("Broker request %s %s failed: %s", method, path, exc)
+        return {"ok": False, "detail": str(exc)}
+
+
+def _ensure_slack_lease() -> Optional[str]:
+    global _slack_lease_id
+    if _slack_lease_id:
+        return _slack_lease_id
+    if SLACK_BOT_TOKEN:
+        # legacy direct token path
+        return None
+    cap = _broker_request(
+        "POST",
+        "/capability",
+        json={
+            "node": "openapi-slack-server",
+            "task": "slack-api",
+            "provider": "slack",
+            "resource": "api",
+            "action": "post",
+            "scope_req": ["post", "read"],
+            "ttl_req": 3600,
+        },
+    )
+    if cap.get("decision") == "ALLOW":
+        _slack_lease_id = cap["lease"]["lease_id"]
+        logger.info("Obtained slack broker lease: %s...", _slack_lease_id[:8])
+        return _slack_lease_id
+    logger.warning("Could not obtain slack broker lease: %s", cap)
+    return None
 
 # ---------------------------------------------------------------------------
 # Pydantic models (arguments & responses)
@@ -140,24 +178,37 @@ class ToolResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SlackClient:
-    """Thin async wrapper over Slack Web API with connection‑pool reuse."""
+    """Thin async wrapper over Slack Web API with connection‑pool reuse.
 
-    BASE_URL = "https://slack.com/api/"
+    Uses APΩ credential broker when SLACK_BOT_TOKEN is not set directly.
+    """
 
-    def __init__(self, token: str, team_id: str, *, max_connections: int = 20):
+    def __init__(self, token: Optional[str], team_id: Optional[str], *, max_connections: int = 20):
+        self.token = token
         self.team_id = team_id
-        self.headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json; charset=utf-8",
-        }
-        limits = httpx.Limits(max_connections=max_connections, max_keepalive_connections=max_connections)
-        self._client = httpx.AsyncClient(
-            base_url=self.BASE_URL,
-            headers=self.headers,
-            limits=limits,
-            http2=True,
-            timeout=10,
-        )
+        self.broker_url = f"{BROKER_URL}/proxy/slack"
+        self._use_broker = not token
+        if not self._use_broker:
+            self.headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            }
+            limits = httpx.Limits(max_connections=max_connections, max_keepalive_connections=max_connections)
+            self._client = httpx.AsyncClient(
+                base_url="https://slack.com/api/",
+                headers=self.headers,
+                limits=limits,
+                http2=True,
+                timeout=10,
+            )
+        else:
+            limits = httpx.Limits(max_connections=max_connections, max_keepalive_connections=max_connections)
+            self._client = httpx.AsyncClient(
+                base_url=self.broker_url,
+                limits=limits,
+                http2=False,
+                timeout=15,
+            )
 
     # ---------------- private helpers ---------------- #
     async def _request(
@@ -169,7 +220,14 @@ class SlackClient:
         json_data: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         try:
-            response = await self._client.request(method, endpoint, params=params, json=json_data)
+            headers = {}
+            if self._use_broker:
+                lease_id = _ensure_slack_lease()
+                if not lease_id:
+                    raise HTTPException(status_code=403, detail="no_active_slack_lease_or_token")
+                headers["X-Lease-Id"] = lease_id
+                headers["X-Raw-Response"] = "true"
+            response = await self._client.request(method, endpoint, params=params, json=json_data, headers=headers)
             response.raise_for_status()
             data = response.json()
             if not data.get("ok"):
@@ -289,6 +347,20 @@ class SlackClient:
 slack_client = SlackClient(token=SLACK_BOT_TOKEN, team_id=SLACK_TEAM_ID)
 
 
+async def _resolve_team_id() -> None:
+    """If team_id is not provided and broker is used, resolve it from auth.test."""
+    global slack_client
+    if slack_client.team_id:
+        return
+    if slack_client._use_broker:
+        try:
+            data = await slack_client._request("GET", "auth.test")
+            slack_client.team_id = data.get("team_id")
+            logger.info("Resolved Slack team_id from broker: %s", slack_client.team_id)
+        except Exception as exc:
+            logger.warning("Could not resolve Slack team_id from broker: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Dynamic tool mapping / endpoint generation
 # ---------------------------------------------------------------------------
@@ -366,6 +438,11 @@ for name, cfg in TOOL_MAPPING.items():
 # ---------------------------------------------------------------------------
 # Lifecycle events
 # ---------------------------------------------------------------------------
+@app.on_event("startup")
+async def _init_slack_client():
+    await _resolve_team_id()
+
+
 @app.on_event("shutdown")
 async def _close_slack_client():
     await slack_client.aclose()

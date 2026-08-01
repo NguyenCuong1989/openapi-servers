@@ -1,4 +1,6 @@
+import ast
 import os
+import re
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -6,7 +8,7 @@ from typing import Optional
 
 # --- LLM/SQL libraries ---
 from langchain_experimental.sql import SQLDatabaseChain
-from langchain_community.llms.openai import OpenAI
+from langchain_openai.chat_models import ChatOpenAI
 from langchain_community.utilities import SQLDatabase
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -16,7 +18,8 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable must be set.")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # Set this in your environment
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY_3")
+OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "http://127.0.0.1:9011/v1")
 
 
 # -------------------------------
@@ -59,21 +62,47 @@ app.add_middleware(
 
 
 # -------------------------------
+# SQL cleaning helper
+# -------------------------------
+def clean_sql(sql_raw: str) -> str:
+    """Strip markdown code fences and SQLQuery/SQLResult noise from LLM output."""
+    sql = sql_raw.strip()
+    # Remove leading/trailing code fences
+    if sql.startswith("```sql"):
+        sql = sql[6:]
+    elif sql.startswith("```"):
+        sql = sql[3:]
+    if sql.endswith("```"):
+        sql = sql[:-3]
+    sql = sql.strip()
+    # Remove SQLQuery: prefix and SQLResult: suffix
+    if "SQLQuery:" in sql:
+        sql = sql.split("SQLQuery:", 1)[-1].strip()
+    if "SQLResult:" in sql:
+        sql = sql.split("SQLResult:", 1)[0].strip()
+    return sql.strip("` \n\r\t")
+
+
+# -------------------------------
 # LLM + SQL Chain Setup (singleton)
 # -------------------------------
 def get_chain():
     # Initiate reflected SQLAlchemy DB
     db = SQLDatabase.from_uri(DATABASE_URL)
     # LLM instance: using OpenAI GPT (or swap for your preferred)
-    llm = OpenAI(
-        temperature=0, openai_api_key=OPENAI_API_KEY, model_name="gpt-3.5-turbo"
+    llm = ChatOpenAI(
+        temperature=0,
+        openai_api_key=OPENAI_API_KEY or "not-needed",
+        model="apo/apple",
+        openai_api_base=OPENAI_API_BASE,
     )
-    return SQLDatabaseChain.from_llm(
-        llm, db, verbose=True, return_sql=True, return_intermediate_steps=True
+    sql_chain = SQLDatabaseChain.from_llm(
+        llm, db, verbose=True, return_sql=True, return_intermediate_steps=False
     )
+    return sql_chain, llm
 
 
-sql_chain = get_chain()
+sql_chain, llm = get_chain()
 
 
 # -------------------------------
@@ -104,17 +133,28 @@ def chat_sql(data: SQLChatInput):
     Enter a natural language instruction/question, get answer from your database.
     """
     try:
-        # Run chain
+        # Step 1: ask the chain to generate SQL only
         result = sql_chain({"query": data.query})
-        # result example: {'result': 'Answer in plain text', 'intermediate_steps': {'sql_cmd': sql, ...}}
-        answer = result["result"]
-        sql = None
-        raw_result = None
-        if "intermediate_steps" in result and "sql_cmd" in result["intermediate_steps"]:
-            sql = result["intermediate_steps"]["sql_cmd"]
-        if "intermediate_steps" in result and "result" in result["intermediate_steps"]:
-            raw_result = result["intermediate_steps"]["result"]
-        return SQLChatOutput(sql=sql or "", answer=answer, raw_result=raw_result)
+        sql_raw = result.get("result", "")
+        sql_clean = clean_sql(sql_raw)
+
+        # Step 2: execute the cleaned SQL against the database
+        raw_string = sql_chain.database.run(sql_clean)
+        try:
+            raw_result = ast.literal_eval(raw_string)
+        except (ValueError, SyntaxError):
+            raw_result = raw_string
+
+        # Step 3: ask the LLM to summarize the result
+        answer_prompt = (
+            f"User question: {data.query}\n"
+            f"SQL executed: {sql_clean}\n"
+            f"SQL result: {raw_result}\n"
+            "Answer concisely in natural language."
+        )
+        answer = llm.invoke(answer_prompt).content
+
+        return SQLChatOutput(sql=sql_clean, answer=answer, raw_result=raw_result)
     except SQLAlchemyError as e:
         raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
     except Exception as e:

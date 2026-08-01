@@ -1,6 +1,7 @@
 import os
 import requests
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -20,6 +21,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# -------------------------------
+# APΩ credential broker client
+# -------------------------------
+BROKER_URL = os.getenv("BROKER_URL", "http://127.0.0.1:8765")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_PSE_CX = os.getenv("GOOGLE_PSE_CX")
+
+
+def _get_broker_lease() -> str | None:
+    if GOOGLE_API_KEY:
+        return None  # legacy direct-key path
+    try:
+        r = requests.post(
+            f"{BROKER_URL}/capability",
+            json={
+                "node": "openapi-google-pse-server",
+                "task": "google-pse-search",
+                "provider": "google_pse",
+                "resource": "search",
+                "action": "read",
+                "scope_req": ["read"],
+                "ttl_req": 3600,
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json()
+        if data.get("decision") == "ALLOW":
+            return data["lease"]["lease_id"]
+    except Exception as exc:
+        print(f"broker lease failed: {exc}")
+    return None
 
 # -------------------------------
 # Pydantic models
@@ -87,20 +121,57 @@ def search_web(
     Returns search results in JSON format with metadata about the search.
     """
     
-    # Get API key and search engine ID from parameters or environment variables
-    google_api_key = api_key or os.getenv("GOOGLE_API_KEY")
-    search_engine_id = cx or os.getenv("GOOGLE_PSE_CX")
-    
+    # Get API key and search engine ID from parameters, environment, or APΩ broker
+    google_api_key = api_key or GOOGLE_API_KEY
+    search_engine_id = cx or GOOGLE_PSE_CX
+
     if not google_api_key:
-        raise HTTPException(
-            status_code=400, 
-            detail="Google API key is required. Provide it as 'api_key' parameter or set GOOGLE_API_KEY environment variable."
-        )
-    
+        # Broker path: the broker holds the PSE API key and cx
+        lease_id = _get_broker_lease()
+        if not lease_id:
+            raise HTTPException(
+                status_code=403,
+                detail="No Google PSE API key or active broker lease available.",
+            )
+        try:
+            broker_params = {
+                "q": q,
+                "num": num,
+                "start": start,
+                "safe": safe,
+            }
+            for k, v in {
+                "lr": lr,
+                "cr": cr,
+                "dateRestrict": dateRestrict,
+                "exactTerms": exactTerms,
+                "excludeTerms": excludeTerms,
+                "fileType": fileType,
+                "siteSearch": siteSearch,
+                "siteSearchFilter": siteSearchFilter,
+            }.items():
+                if v is not None:
+                    broker_params[k] = v
+            r = requests.get(
+                f"{BROKER_URL}/proxy/google_pse/search",
+                params=broker_params,
+                headers={"X-Lease-Id": lease_id, "X-Raw-Response": "true"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "error" in data:
+                raise HTTPException(status_code=data["error"].get("code", 400), detail=data["error"].get("message", "Unknown Google API error"))
+            return data
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Broker proxy error: {e}")
+
     if not search_engine_id:
         raise HTTPException(
-            status_code=400, 
-            detail="Programmable Search Engine ID is required. Provide it as 'cx' parameter or set GOOGLE_PSE_CX environment variable."
+            status_code=400,
+            detail="Programmable Search Engine ID is required. Provide it as 'cx' parameter or set GOOGLE_PSE_CX environment variable.",
         )
     
     # Build request parameters

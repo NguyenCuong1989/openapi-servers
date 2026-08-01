@@ -7,5 +7,4 @@ langchain
 langchain_community
 langchain-openai
 langchain-experimental
-sentence_transformers
 sqlalchemy
