@@ -24,7 +24,7 @@ async def create_dynamic_endpoints(app: FastAPI, session: ClientSession):
         print(tool)
         endpoint_name = tool.name
         endpoint_description = tool.description
-        schema = tool.inputSchema
+        schema = getattr(tool, "input_schema", getattr(tool, "inputSchema", {}))
 
         # Dynamically creating a Pydantic model for validation and openAPI coverage
         model_fields = {}

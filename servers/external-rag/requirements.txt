@@ -6,3 +6,4 @@ python-multipart
 langchain
 langchain_community
 sentence_transformers
+faiss-cpu

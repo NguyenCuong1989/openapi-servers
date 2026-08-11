@@ -3,120 +3,162 @@ services:
     build:
       context: ./servers/time
     ports:
-      - "8901:8000"
-
+    - 8901:8000
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   weather-server:
     build:
       context: ./servers/weather
     ports:
-      - "8902:8000"
-
+    - 8902:8000
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   filesystem-server:
     build:
       context: ./servers/filesystem
-    user: "0"
+    user: '0'
     ports:
-      - "8903:8000"
+    - 8903:8000
     environment:
-      - ALLOWED_DIRECTORIES=/Users/andy
+    - ALLOWED_DIRECTORIES=/Users/andy
     volumes:
-      - type: bind
-        source: /Users/andy
-        target: /Users/andy
-        read_only: true
-
+    - type: bind
+      source: /Users/andy
+      target: /Users/andy
+      read_only: true
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   git-server:
     build:
       context: ./servers/git
     ports:
-      - "8904:8000"
+    - 8904:8000
     volumes:
-      - type: bind
-        source: /Users/andy/openapi-servers
-        target: /Users/andy/openapi-servers
-        read_only: true
-
+    - type: bind
+      source: /Users/andy/openapi-servers
+      target: /Users/andy/openapi-servers
+      read_only: true
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   memory-server:
     build:
       context: ./servers/memory
     ports:
-      - "8905:8000"
+    - 8905:8000
     volumes:
-      - memory:/app/data
-
-  # UI / extra
+    - memory:/app/data
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   quotes-ui:
     build:
       context: ./servers/quotes-ui
     ports:
-      - "8906:8000"
-
+    - 8906:8000
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   flashcards:
     build:
       context: ./servers/flashcards
     ports:
-      - "8907:8000"
-
+    - 8907:8000
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   time-ui:
     build:
       context: ./servers/time-ui
     ports:
-      - "8908:8000"
-
-  # LLM / logic
+    - 8908:8000
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   summarizer-server:
     build:
       context: ./servers/summarizer-tool
     ports:
-      - "8909:8000"
+    - 8909:8000
     environment:
-      - MODEL_URL=http://host.docker.internal:11434
-      - MODEL=qwen2.5:1.5b
-
+    - MODEL_URL=http://host.docker.internal:11434
+    - MODEL=qwen2.5:1.5b
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   bitcoin-predictor:
     build:
       context: ./servers/bitcoin-price-predictor
     ports:
-      - "8910:8000"
-
+    - 8910:8000
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   sql-server:
     build:
       context: ./servers/sql
     ports:
-      - "8911:8000"
+    - 8911:8000
     env_file:
-      - /Users/andy/.config/hyperai/credentials.env
+    - /Users/andy/.config/hyperai/credentials.env
     environment:
-      - DATABASE_URL=sqlite:////app/data/apo_runtime.db
-      - OPENAI_API_BASE=http://host.docker.internal:9011/v1
+    - DATABASE_URL=sqlite:////app/data/apo_runtime.db
+    - OPENAI_API_BASE=http://host.docker.internal:9011/v1
     volumes:
-      - sql-data:/app/data
-
-  # external-rag: deferred — sentence-transformers/torch image >3 GB on this disk
-  # external-rag:
-  #   build:
-  #     context: ./servers/external-rag
-  #   ports:
-  #     - "8912:8000"
-  #   environment:
-  #     - HF_HOME=/app/.cache
-  #     - SENTENCE_TRANSFORMERS_HOME=/app/.cache
-  #   volumes:
-  #     - rag-cache:/app/.cache
-
+    - sql-data:/app/data
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   slack-server:
     build:
       context: ./servers/slack
     ports:
-      - "8913:8000"
-
+    - 8913:8000
+    environment:
+    - BROKER_URL=http://host.docker.internal:8765
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
   google-pse:
     build:
       context: ./servers/google-pse
     ports:
-      - "8914:8000"
-
+    - 8914:8000
+    environment:
+    - BROKER_URL=http://host.docker.internal:8765
+    security_opt:
+    - no-new-privileges:true
+    read_only: true
+    tmpfs:
+    - /tmp
 volumes:
-  memory:
-  sql-data:
-  rag-cache:
+  memory: null
+  sql-data: null
+  rag-cache: null
